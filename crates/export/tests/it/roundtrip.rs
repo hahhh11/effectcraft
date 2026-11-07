@@ -668,6 +668,47 @@ fn svga_roundtrip() {
     }
 }
 
+/// `Cx::pixels_with` always returns four bytes a pixel, even for an RGB-channel job (RGB just
+/// flattens alpha over the background). Declaring those bytes as a three-byte RGB image once
+/// mis-strided every scan line and turned every SVGA / APNG frame into coloured vertical stripes
+/// in the player. Both writers must declare RGBA and decode back to the rendered frame.
+#[test]
+fn rgb_channels_still_write_rgba_pixels() {
+    let (p, cid) = project(None);
+
+    // SVGA: the embedded PNG's IHDR colour type and a decoded frame.
+    let d = out_dir("svga_rgb");
+    let mut om = OutputModule::for_format(OutputFormat::Svga);
+    om.channels = Channels::Rgb;
+    let path = d.join("anim.svga");
+    run(&p, cid, &NoFootage, &om, &path);
+    let bytes = std::fs::read(&path).expect("read");
+    let mut proto = Vec::new();
+    std::io::Read::read_to_end(&mut flate2::read::ZlibDecoder::new(&bytes[..]), &mut proto)
+        .expect("inflate");
+    let top = proto_fields(&proto);
+    let map: Vec<_> = top.iter().filter(|f| f.0 == 3).collect();
+    let entry = proto_fields(&map[5].2);
+    let png = &entry[1].2;
+    assert_eq!(png[25], 6, "SVGA picture declares RGBA, not RGB");
+    let img = image::load_from_memory_with_format(png, image::ImageFormat::Png).expect("PNG frame");
+    let rgba = img.to_rgba8();
+    check_frame(&over_background(rgba.as_raw()), 5, 0.02);
+
+    // APNG: IHDR colour type and a decoded frame.
+    let d2 = out_dir("apng_rgb");
+    let mut om2 = OutputModule::for_format(OutputFormat::Apng);
+    om2.channels = Channels::Rgb;
+    let path2 = d2.join("anim.png");
+    run(&p, cid, &NoFootage, &om2, &path2);
+    let b2 = std::fs::read(&path2).expect("read");
+    let chunks = png_chunks(&b2);
+    assert_eq!(chunks[0].0, "IHDR");
+    assert_eq!(chunks[0].1[9], 6, "APNG IHDR declares RGBA, not RGB");
+    let frame = apng_frame(&b2, 5);
+    check_frame(&over_background(&frame), 5, 0.02);
+}
+
 /// Read a protobuf message into `(field, wire type, value)` triples; a length-delimited value is
 /// its bytes, a varint's value is its own encoded bytes.
 fn proto_fields(mut b: &[u8]) -> Vec<(u32, u8, Vec<u8>)> {

@@ -15,7 +15,6 @@
 use std::io::Write;
 
 use effectcraft_project::Comp;
-use effectcraft_project::render_queue::Channels;
 
 use crate::pipeline::Cx;
 use crate::{ExportError, Result, State, batch_size, io, pngenc};
@@ -126,7 +125,11 @@ fn gcd(a: i64, b: i64) -> i64 {
 pub(crate) async fn apng(cx: &Cx<'_>, comp: &Comp, w: u32, h: u32, st: &mut State<'_>) -> Result<crate::Report> {
     let path = cx.place(cx.path, 1);
     let mut file = cx.create(&path)?;
-    let colour = if cx.output.channels == Channels::Rgba { pngenc::Colour::Rgba } else { pngenc::Colour::Rgb };
+    // `Cx::pixels_with` always returns four bytes a pixel (RGBA), regardless of
+    // `output.channels`; RGB just flattens alpha over the background. Declaring a
+    // three-byte RGB image here would mis-stride every row and turn the frames
+    // into coloured vertical stripes. Keep the colour type in sync with the data.
+    let colour = pngenc::Colour::Rgba;
     let rate = cx.settings.rate(comp);
     let (delay_num, delay_den) = delay_for(rate.num, rate.den);
     let frames = u32::try_from(st.total()).map_err(|_| ExportError::Unsupported("this animation has too many frames for APNG".into()))?;

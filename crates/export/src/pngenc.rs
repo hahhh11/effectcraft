@@ -1,10 +1,14 @@
 //! The PNG pieces the animated writers share: chunks with their CRC, per-row filtering, a zlib
 //! stream, and a whole still image (the SVGA container's frame pictures).
 //!
-//! 8-bit RGB or RGBA only, no interlacing — the frames a render produces. Filtering picks, per
-//! row, the filter whose output has the smallest sum of absolute signed values, the standard
-//! heuristic every PNG encoder uses (`None`, `Sub`, `Up`, `Average`, `Paeth`); this is what keeps
-//! a rendered frame within a few percent of what libpng writes.
+//! Rendered frames are **always 8-bit straight-alpha RGBA**, four bytes a pixel, no interlacing —
+//! `Cx::pixels_with` returns exactly that for every output channel setting (RGB merely flattens
+//! alpha over the background). The PNG colour type must therefore never vary with the channel
+//! setting: declaring three-byte RGB mis-strides every scan line and produces coloured vertical
+//! stripes in APNG / SVGA players.
+//!
+//! Per-row filtering picks the filter whose output has the smallest sum of absolute signed values,
+//! the standard heuristic every PNG encoder uses (`None`, `Sub`, `Up`, `Average`, `Paeth`).
 
 use std::io::Write;
 
@@ -13,30 +17,21 @@ use crate::{ExportError, Result, crc32, io};
 /// The eight bytes every PNG starts with.
 pub(crate) const SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
 
-/// The colour types an 8-bit frame uses.
+/// The one pixel layout a rendered frame has: straight (unpremultiplied) RGBA.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Colour {
-    /// Three bytes a pixel, no alpha.
-    Rgb,
-    /// Four bytes a pixel: straight (unpremultiplied) RGB and alpha.
     Rgba,
 }
 
 impl Colour {
-    /// The PNG colour-type code.
+    /// The PNG colour-type code for RGBA.
     fn code(self) -> u8 {
-        match self {
-            Colour::Rgb => 2,
-            Colour::Rgba => 6,
-        }
+        6
     }
 
     /// Bytes a pixel.
     fn channels(self) -> usize {
-        match self {
-            Colour::Rgb => 3,
-            Colour::Rgba => 4,
-        }
+        4
     }
 }
 
@@ -51,7 +46,7 @@ pub(crate) fn chunk(w: &mut impl Write, kind: &[u8; 4], data: &[u8]) -> Result<(
     w.write_all(&crc.to_be_bytes()).map_err(io)
 }
 
-/// The 13-byte `IHDR` data for an 8-bit image.
+/// The 13-byte `IHDR` data for an 8-bit RGBA image.
 pub(crate) fn ihdr(width: u32, height: u32, colour: Colour) -> Vec<u8> {
     let mut v = Vec::with_capacity(13);
     v.extend_from_slice(&width.to_be_bytes());
@@ -77,8 +72,7 @@ fn paeth(a: u8, b: u8, c: u8) -> u8 {
 }
 
 /// The image's scan lines, each preceded by its filter byte: the filtered bytes every PNG image
-/// stream holds before compression. `px` is row-major, top row first, `colour.channels()` bytes a
-/// pixel.
+/// stream holds before compression. `px` is row-major, top row first, four bytes a pixel.
 pub(crate) fn filter_rows(px: &[u8], width: u32, height: u32, colour: Colour) -> Result<Vec<u8>> {
     if width == 0 || height == 0 {
         return Err(ExportError::Encode(format!("a {width}×{height} image has no pixels")));
@@ -88,8 +82,7 @@ pub(crate) fn filter_rows(px: &[u8], width: u32, height: u32, colour: Colour) ->
     let need = stride.checked_mul(height as usize).ok_or_else(|| ExportError::Encode(format!("a {width}×{height} image is too large")))?;
     if px.len() < need {
         return Err(ExportError::Encode(format!(
-            "a {width}×{height} {} frame needs {need} bytes, not {}",
-            if colour == Colour::Rgba { "RGBA" } else { "RGB" },
+            "a {width}×{height} RGBA frame needs {need} bytes, not {}",
             px.len()
         )));
     }
@@ -178,23 +171,10 @@ mod tests {
             .collect();
         let png = still(&px, w, h, Colour::Rgba).expect("encode");
         assert_eq!(&png[..8], &SIGNATURE);
+        assert_eq!(png[25], 6, "IHDR declares RGBA");
         let (dw, dh, back) = decode(&png);
         assert_eq!((dw, dh), (w, h));
         assert_eq!(back, px, "8-bit RGBA comes back byte for byte");
-    }
-
-    #[test]
-    fn rgb_still_roundtrips() {
-        let (w, h) = (5u32, 3u32);
-        let px: Vec<u8> = (0..(w * h * 3)).map(|i| (i * 11) as u8).collect();
-        let png = still(&px, w, h, Colour::Rgb).expect("encode");
-        let (dw, dh, back) = decode(&png);
-        assert_eq!((dw, dh), (w, h));
-        assert_eq!(back.len(), (w * h * 4) as usize);
-        for (i, p) in back.as_chunks::<4>().0.iter().enumerate() {
-            assert_eq!(&p[..3], px.get(i * 3..i * 3 + 3).unwrap_or(&[0, 0, 0]), "pixel {i}");
-            assert_eq!(p[3], 255);
-        }
     }
 
     #[test]

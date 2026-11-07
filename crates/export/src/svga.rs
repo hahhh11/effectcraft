@@ -23,7 +23,6 @@
 use std::io::Write as _;
 
 use effectcraft_project::Comp;
-use effectcraft_project::render_queue::Channels;
 
 use crate::pipeline::Cx;
 use crate::{ExportError, Result, State, batch_size, pngenc};
@@ -150,7 +149,12 @@ pub(crate) async fn svga(cx: &Cx<'_>, comp: &Comp, w: u32, h: u32, st: &mut Stat
             "SVGA frame-by-frame export holds up to {MAX_FRAMES} frames (this render has {frames}): shorten the work area or render a movie"
         )));
     }
-    let colour = if cx.output.channels == Channels::Rgba { pngenc::Colour::Rgba } else { pngenc::Colour::Rgb };
+    // `Cx::pixels_with` always returns four bytes a pixel (RGBA), whatever
+    // `output.channels` is: RGB merely flattens alpha over the background, and
+    // Alpha writes the mask into all three colour channels. Encoding those bytes
+    // as three-byte RGB would shift every scan line and produce coloured vertical
+    // stripes in every player. Always declare the real pixel layout.
+    let colour = pngenc::Colour::Rgba;
     let rate = cx.settings.rate(comp);
     let fps = fps_of(rate.num, rate.den);
     let path = cx.place(cx.path, 1);
