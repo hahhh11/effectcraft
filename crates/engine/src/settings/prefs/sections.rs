@@ -48,6 +48,8 @@ page!(General {
     use_system_color_picker: bool = false,
     /// Number of projects in File ▸ Open Recent.
     recent_items: u32 = 10,
+    /// Ask for a newer release when EffectCraft starts (Help ▸ Check for Updates asks anyway).
+    check_for_updates: bool = true,
 });
 
 page!(Startup {

@@ -1886,6 +1886,9 @@ const SIMPLIFIED_CHINESE: &[(&str, &str)] = &[
     ("Levels of Undo", "撤消级别"),
     ("Path Point and Handle Size", "路径点和手柄大小"),
     ("Recent Projects Shown", "显示的最近项目数"),
+    ("Check for Updates at Startup", "启动时检查更新"),
+    // Edit ▸ Preferences (the Windows and Linux Settings menu).
+    ("Preferences", "首选项"),
     ("Options", "选项"),
     ("Show Tool Tips", "显示工具提示"),
     ("Create Layers at Composition Start Time", "在合成开始时间创建图层"),

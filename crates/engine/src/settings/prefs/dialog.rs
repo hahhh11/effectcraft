@@ -88,6 +88,7 @@ pub fn pages() -> Vec<Page> {
                 s("general.undoLevels", "Levels of Undo", Kind::Int(1, 99, ""), true),
                 s("general.pathPointSize", "Path Point and Handle Size", Kind::Int(3, 20, "px"), true),
                 s("general.recentItems", "Recent Projects Shown", Kind::Int(1, 30, ""), true),
+                s("general.checkForUpdates", "Check for Updates at Startup", B, true),
                 Section("Options"),
                 s("general.showToolTips", "Show Tool Tips", B, true),
                 s("general.viewerWheelScrubbing", "Scrub Composition Frames with Mouse Wheel", B, true),

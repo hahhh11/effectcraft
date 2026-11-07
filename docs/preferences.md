@@ -34,6 +34,7 @@ Commands (CLI, MCP, control channel):
 - `general.undoLevels`: Levels of Undo
 - `general.pathPointSize`: Path Point and Handle Size
 - `general.recentItems`: Recent Projects Shown
+- `general.checkForUpdates`: Check for Updates at Startup (on by default). Off: EffectCraft stops asking for a newer release when it starts; Help ▸ Check for Updates still asks.
 - `general.showToolTips`: Show Tool Tips
 - `general.viewerWheelScrubbing`: Scrub Composition Frames with Mouse Wheel (off by default). On: an unmodified mouse wheel over the Composition viewer steps frames, and the smoothed tail of that notch does not zoom or pan. Ctrl/Cmd+wheel and a trackpad still zoom and pan.
 - `general.createLayersAtCompStart`: Create Layers at Composition Start Time

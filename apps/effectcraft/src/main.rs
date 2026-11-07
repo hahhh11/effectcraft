@@ -309,8 +309,11 @@ fn main() -> eframe::Result {
             // The ScriptUI panels open when the app last quit open again (a failing one is
             // reported in a toast and forgotten).
             let _ = session.execute("window.restoreScriptPanels", json!({}));
+            // Settings ▸ General ▸ Check for Updates at Startup (Help ▸ Check for Updates asks
+            // anyway, so turning it off only silences the prompt).
+            let check_updates = session.prefs.general.check_for_updates;
             let mut app = EffectcraftApp::new(session);
-            app.set_startup_update_check(true);
+            app.set_startup_update_check(check_updates);
             app.set_gpu_failure_bridge(gpu_failures);
             app.ui.start_screen = show_home;
             if let Some(n) = notice {
