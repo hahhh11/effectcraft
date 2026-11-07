@@ -15,7 +15,7 @@
 //! | Entry | Holds |
 //! |---|---|
 //! | `frame_00000.png` … | one 8-bit RGBA (or RGB) PNG a frame, the sprite's `imageKey` |
-//! | `movie.binary` | `MovieEntity{version, params, sprites}` (protobuf) |
+//! | `movie.binary` | `MovieEntity{version, params, sprites}` (protobuf), zlib-compressed: the players inflate it themselves |
 
 use effectcraft_project::Comp;
 use effectcraft_project::render_queue::Channels;
@@ -148,7 +148,14 @@ pub(crate) async fn svga(cx: &Cx<'_>, comp: &Comp, w: u32, h: u32, st: &mut Stat
         st.advance(end - i)?;
         i = end;
     }
-    archive.add("movie.binary", &movie(w, h, fps, &images))?;
+    // The players inflate `movie.binary` themselves (`pako.Inflate` in svgaplayerweb, which
+    // throws "incorrect header check" on a bare protobuf), so its bytes are a zlib stream and the
+    // archive entry that carries it is stored as it is.
+    let proto = movie(w, h, fps, &images);
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::new(9));
+    std::io::Write::write_all(&mut encoder, &proto).map_err(crate::io)?;
+    let packed = encoder.finish().map_err(crate::io)?;
+    archive.add("movie.binary", &packed)?;
     let file = archive.finish()?;
     let bytes = file.finish()?;
     Ok(crate::Report { path, frames: 0, width: w, height: h, seconds: 0.0, bytes, audio: false, log: None, overflow: vec![] })

@@ -1,6 +1,11 @@
-//! A minimal ZIP writer for the SVGA container: one entry per file, deflate (or stored, when
-//! compressing makes it bigger), no encryption and no ZIP64 — a container that would need it is
-//! refused with an error rather than written wrong.
+//! A minimal ZIP writer for the SVGA container: one entry per file, every entry stored, no
+//! encryption and no ZIP64 — a container that would need it is refused with an error rather than
+//! written wrong.
+//!
+//! Entries are stored rather than deflated because the SVGA players in the wild read the archive
+//! with their own minimal ZIP readers, not zlib-aware ones: a stored entry needs no decompressor
+//! at all. The frames are PNGs (already compressed) and `movie.binary` is a zlib stream the
+//! players inflate themselves, so deflating again would win a percent at best.
 //!
 //! Timestamps are the ZIP epoch (1980-01-01 00:00), so the bytes depend only on the content: two
 //! exports of the same frames are byte-identical, which is what the round-trip tests check.
@@ -48,9 +53,7 @@ impl<W: Write> Zip<W> {
         }
         let uncompressed =
             u32::try_from(data.len()).map_err(|_| ExportError::Unsupported(format!("{name} is over 4 GiB, more than an SVGA container holds")))?;
-        let deflated = deflate(data)?;
-        // Storing is right when deflate grows already-compressed data (PNG frames).
-        let (method, body): (u16, &[u8]) = if deflated.len() < data.len() { (8, &deflated) } else { (0, data) };
+        let (method, body): (u16, &[u8]) = (0, data);
         let compressed = u32::try_from(body.len()).map_err(|_| ExportError::Unsupported(format!("{name} is over 4 GiB, more than an SVGA container holds")))?;
         let offset = u32::try_from(self.offset).map_err(|_| ExportError::Unsupported("an SVGA container over 4 GiB".into()))?;
         let crc = crc32::crc32(data);
@@ -120,13 +123,6 @@ impl<W: Write> Zip<W> {
     }
 }
 
-/// Raw deflate (no zlib header), what a ZIP entry holds.
-fn deflate(data: &[u8]) -> Result<Vec<u8>> {
-    let mut enc = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::new(6));
-    enc.write_all(data).map_err(io)?;
-    enc.finish().map_err(io)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,9 +185,10 @@ mod tests {
         assert_eq!(entries[1], ("notes.txt".to_string(), text));
     }
 
+    /// Every entry is stored: a player's own ZIP reader then needs no inflater, which is what the
+    /// SVGA parsers in the wild assume (#SVGA "incorrect header check").
     #[test]
-    fn stored_is_used_when_deflate_would_grow() {
-        // Pseudo-random bytes that deflate cannot shrink.
+    fn every_entry_is_stored() {
         let noisy: Vec<u8> = (0..4096u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8).collect();
         let mut zip = Zip::new(Vec::new());
         zip.add("noise.bin", &noisy).expect("entry");

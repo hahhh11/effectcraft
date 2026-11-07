@@ -624,9 +624,13 @@ fn svga_roundtrip() {
         assert_eq!(*name, format!("frame_{i:05}.png"));
     }
 
-    // movie.binary: version, canvas, frame rate, frame count, then one sprite a frame with a key
+    // movie.binary: a zlib stream (the players inflate it themselves, as svgaplayerweb does) over
+    // the protobuf: version, canvas, frame rate, frame count, then one sprite a frame with a key
     // frame per movie frame.
-    let movie = entries.iter().find(|(n, _)| n == "movie.binary").map(|(_, d)| d.clone()).expect("movie.binary");
+    let packed = entries.iter().find(|(n, _)| n == "movie.binary").map(|(_, d)| d.clone()).expect("movie.binary");
+    assert_eq!(packed[0], 0x78, "movie.binary starts with a zlib header");
+    let mut movie = Vec::new();
+    std::io::Read::read_to_end(&mut flate2::read::ZlibDecoder::new(&packed[..]), &mut movie).expect("inflate movie.binary");
     let top = proto_fields(&movie);
     assert_eq!(top[0].2, b"2.0.0".to_vec());
     let params = proto_fields(&top[1].2);

@@ -205,8 +205,12 @@ mod tests {
 
     #[test]
     fn paeth_matches_the_specification() {
-        assert_eq!(paeth(10, 20, 15), 20);
+        // From the PNG spec's own tie-break rule: the predictor whose distance is smallest wins,
+        // and `a`, then `b`, then `c` break ties in that order.
+        assert_eq!(paeth(10, 10, 10), 10, "a wins when a, b and c are equal");
+        assert_eq!(paeth(0, 100, 0), 100, "b wins");
+        assert_eq!(paeth(10, 20, 15), 15, "c wins: p is 15, so its distance is 0");
+        assert_eq!(paeth(200, 10, 100), 100, "c wins again");
         assert_eq!(paeth(0, 0, 0), 0);
-        assert_eq!(paeth(200, 10, 100), 200);
     }
 }
