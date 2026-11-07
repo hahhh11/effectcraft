@@ -40,8 +40,18 @@ impl<W: Write> Zip<W> {
         Zip { out, entries: Vec::new(), offset: 0 }
     }
 
-    /// Add `data` as the entry `name` (ASCII, relative, forward slashes only).
+    /// Add `data` as the entry `name` (ASCII, relative, forward slashes only), stored.
     pub(crate) fn add(&mut self, name: &str, data: &[u8]) -> Result<()> {
+        self.add_entry(name, data, false)
+    }
+
+    /// Add `data` deflated, for an entry of plain text that shrinks a lot (`movie.spec`). Every
+    /// reader that opens a ZIP at all can inflate an entry, so this stays compatible.
+    pub(crate) fn add_deflated(&mut self, name: &str, data: &[u8]) -> Result<()> {
+        self.add_entry(name, data, true)
+    }
+
+    fn add_entry(&mut self, name: &str, data: &[u8], compress: bool) -> Result<()> {
         if name.is_empty() || name.len() > 0xFFFF {
             return Err(ExportError::Encode(format!("{name:?} is not a usable archive entry name")));
         }
@@ -53,7 +63,11 @@ impl<W: Write> Zip<W> {
         }
         let uncompressed =
             u32::try_from(data.len()).map_err(|_| ExportError::Unsupported(format!("{name} is over 4 GiB, more than an SVGA container holds")))?;
-        let (method, body): (u16, &[u8]) = (0, data);
+        let deflated = if compress { Some(deflate(data)?) } else { None };
+        let (method, body): (u16, &[u8]) = match &deflated {
+            Some(d) if d.len() < data.len() => (8, d.as_slice()),
+            _ => (0, data),
+        };
         let compressed = u32::try_from(body.len()).map_err(|_| ExportError::Unsupported(format!("{name} is over 4 GiB, more than an SVGA container holds")))?;
         let offset = u32::try_from(self.offset).map_err(|_| ExportError::Unsupported("an SVGA container over 4 GiB".into()))?;
         let crc = crc32::crc32(data);
@@ -121,6 +135,13 @@ impl<W: Write> Zip<W> {
         self.out.flush().map_err(io)?;
         Ok(self.out)
     }
+}
+
+/// Raw deflate (no zlib header), which is what a ZIP entry of method 8 holds.
+fn deflate(data: &[u8]) -> Result<Vec<u8>> {
+    let mut enc = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::new(6));
+    enc.write_all(data).map_err(io)?;
+    enc.finish().map_err(io)
 }
 
 #[cfg(test)]

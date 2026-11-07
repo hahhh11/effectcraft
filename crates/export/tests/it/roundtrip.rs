@@ -618,30 +618,34 @@ fn svga_roundtrip() {
 
     let entries = zip_entries(&bytes);
     let names: Vec<&str> = entries.iter().map(|(n, _)| n.as_str()).collect();
-    assert_eq!(names.len(), FRAMES as usize + 1, "one picture a frame, plus movie.binary");
-    assert_eq!(names.last(), Some(&"movie.binary"));
+    assert_eq!(names.len(), FRAMES as usize + 1, "one picture a frame, plus movie.spec");
+    assert_eq!(names.last(), Some(&"movie.spec"));
     for (i, name) in names.iter().take(FRAMES as usize).enumerate() {
         assert_eq!(*name, format!("frame_{i:05}.png"));
     }
 
-    // movie.binary: a zlib stream (the players inflate it themselves, as svgaplayerweb does) over
-    // the protobuf: version, canvas, frame rate, frame count, then one sprite a frame with a key
-    // frame per movie frame.
-    let packed = entries.iter().find(|(n, _)| n == "movie.binary").map(|(_, d)| d.clone()).expect("movie.binary");
-    assert_eq!(packed[0], 0x78, "movie.binary starts with a zlib header");
-    let mut movie = Vec::new();
-    std::io::Read::read_to_end(&mut flate2::read::ZlibDecoder::new(&packed[..]), &mut movie).expect("inflate movie.binary");
-    let top = proto_fields(&movie);
-    assert_eq!(top[0].2, b"2.0.0".to_vec());
-    let params = proto_fields(&top[1].2);
-    assert_eq!(f32_le(&params[0].2), W as f32, "viewBoxWidth");
-    assert_eq!(f32_le(&params[1].2), H as f32, "viewBoxHeight");
-    assert_eq!(proto_u64(&params[2].2), 10, "fps");
-    assert_eq!(proto_u64(&params[3].2), FRAMES, "frames");
-    let sprites: Vec<_> = top.iter().filter(|f| f.0 == 4).collect();
-    assert_eq!(sprites.len(), FRAMES as usize);
-    let first = proto_fields(&sprites[0].2);
-    assert_eq!(first[0].2, b"frame_00000.png".to_vec(), "the sprite's imageKey");
+    // movie.spec: the 1.5 JSON the players read out of a ZIP — canvas, frame rate, the image map
+    // and one sprite per frame whose alpha is 1 on its own frame only.
+    let spec = entries.iter().find(|(n, _)| n == "movie.spec").map(|(_, d)| d.clone()).expect("movie.spec");
+    let v: serde_json::Value = serde_json::from_slice(&spec).expect("movie.spec is JSON");
+    assert_eq!(v["params"]["viewBoxWidth"], W as f64, "viewBoxWidth");
+    assert_eq!(v["params"]["viewBoxHeight"], H as f64, "viewBoxHeight");
+    assert_eq!(v["params"]["fps"], 10.0, "fps");
+    assert_eq!(v["params"]["frames"], FRAMES as f64, "frames");
+    assert_eq!(v["images"]["frame_00000"], "frame_00000", "image map key to entry base name");
+    let sprites = v["sprites"].as_array().expect("sprites");
+    assert_eq!(sprites.len(), FRAMES as usize, "one sprite a frame");
+    assert_eq!(sprites[0]["imageKey"], "frame_00000");
+    for (i, sprite) in sprites.iter().enumerate() {
+        let frames = sprite["frames"].as_array().expect("frames");
+        assert_eq!(frames.len(), FRAMES as usize, "one key frame per movie frame");
+        assert_eq!(frames[i]["alpha"], 1.0, "sprite {i} is opaque on its own frame");
+        if i > 0 {
+            assert_eq!(frames[i - 1]["alpha"], 0.0, "sprite {i} is clear before it");
+        }
+        assert_eq!(frames[i]["layout"]["width"], W as f64);
+        assert_eq!(frames[i]["layout"]["height"], H as f64);
+    }
 
     // A frame picture decodes to what the comp rendered.
     for k in [0u64, 5] {
@@ -768,68 +772,6 @@ fn zip_entries(b: &[u8]) -> Vec<(String, Vec<u8>)> {
         p = start + compressed;
     }
     out
-}
-
-/// A protobuf message's `(field, wire type, value)` triples; length-delimited values are bytes.
-fn proto_fields(mut b: &[u8]) -> Vec<(u32, u8, Vec<u8>)> {
-    let mut out = Vec::new();
-    fn varint(b: &mut &[u8]) -> u64 {
-        let mut v = 0u64;
-        let mut shift = 0;
-        loop {
-            let byte = b[0];
-            *b = &b[1..];
-            v |= ((byte & 0x7F) as u64) << shift;
-            if byte & 0x80 == 0 {
-                return v;
-            }
-            shift += 7;
-        }
-    }
-    while !b.is_empty() {
-        let key = varint(&mut b);
-        let (field, wire) = ((key >> 3) as u32, (key & 7) as u8);
-        let value = match wire {
-            0 => {
-                // Keep the varint's own bytes: a fixed-width copy would not round-trip.
-                let start = b;
-                let _ = varint(&mut b);
-                let consumed = start.len().saturating_sub(b.len());
-                start[..consumed].to_vec()
-            }
-            2 => {
-                let n = varint(&mut b) as usize;
-                let v = b[..n].to_vec();
-                b = &b[n..];
-                v
-            }
-            5 => {
-                let v = b[..4].to_vec();
-                b = &b[4..];
-                v
-            }
-            other => panic!("unexpected protobuf wire type {other}"),
-        };
-        out.push((field, wire, value));
-    }
-    out
-}
-
-fn proto_u64(v: &[u8]) -> u64 {
-    let mut out = 0u64;
-    let mut shift = 0;
-    for byte in v {
-        out |= ((byte & 0x7F) as u64) << shift;
-        if byte & 0x80 == 0 {
-            break;
-        }
-        shift += 7;
-    }
-    out
-}
-
-fn f32_le(v: &[u8]) -> f32 {
-    f32::from_le_bytes([v[0], v[1], v[2], v[3]])
 }
 
 #[test]

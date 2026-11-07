@@ -1,6 +1,6 @@
 [package]
 name = "effectcraft-export"
-description = "Render Queue jobs and output modules: H.264 MP4 (+AAC), ProRes and uncompressed MOV (+PCM) via FilmCraft, HEVC / AV1 MP4 (+AAC) and WebM (VP9 or AV1 + Opus) via EffectCraft encoders, PNG/JPEG/TIFF/EXR/Targa sequences, animated GIF, WAV/AIFF"
+description = "Render Queue jobs and output modules: H.264 MP4 (+AAC), ProRes and uncompressed MOV (+PCM) via FilmCraft, HEVC / AV1 MP4 (+AAC) and WebM (VP9 or AV1 + Opus) via EffectCraft encoders, PNG/JPEG/TIFF/EXR/Targa sequences, animated GIF, APNG and SVGA, WAV/AIFF"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -32,6 +32,7 @@ thiserror = { workspace = true }
 log = { workspace = true }
 
 [dev-dependencies]
+serde_json = { workspace = true }
 effectcraft-media = { workspace = true }
 effectcraft-effects = { workspace = true }
 effectcraft-color = { workspace = true }
