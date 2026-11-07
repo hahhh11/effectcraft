@@ -186,6 +186,13 @@ pub fn builtin_output_modules() -> Vec<OutputModule> {
     exr.channels = Channels::Rgba;
     v.push(exr);
     v.push(om("Animated GIF", OutputFormat::Gif));
+    v.push(om("Animated PNG", OutputFormat::Apng));
+    let mut apa = om("Animated PNG with Alpha", OutputFormat::Apng);
+    apa.channels = Channels::Rgba;
+    v.push(apa);
+    let mut svga = om("SVGA with Alpha", OutputFormat::Svga);
+    svga.channels = Channels::Rgba;
+    v.push(svga);
     v.push(om("WebM (VP9 + Opus)", OutputFormat::WebM));
     let mut wa = om("WebM with Alpha", OutputFormat::WebM);
     wa.channels = Channels::Rgba;

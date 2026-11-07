@@ -228,6 +228,12 @@ pub fn bytes_per_frame(om: &OutputModule, w: u32, h: u32, fps: f64) -> f64 {
         }
         OutputFormat::WebM => mbps(8.0) * px / fps,
         OutputFormat::Gif => w as f64 * h as f64 * 0.5,
+        // Lossless frames: a filtered, deflated 8-bit RGBA frame settles around half its raw
+        // size, RGB around a third.
+        OutputFormat::Apng | OutputFormat::Svga => {
+            use effectcraft_project::render_queue::Channels;
+            w as f64 * h as f64 * if om.channels == Channels::Rgba { 2.0 } else { 1.5 }
+        }
         OutputFormat::Wav | OutputFormat::Aiff => om.audio_sample_rate as f64 * 4.0 / fps,
         _ => w as f64 * h as f64 * 3.0,
     }

@@ -206,7 +206,7 @@ fn apply_om_template(om: &mut OutputModule, t: &OutputModule) {
 const EXR_COMPRESSIONS: &str = "none|rle|zips|zip|piz|pxr24|b44|b44a|dwaa|dwab";
 
 /// The `format` parameter's values.
-const FORMATS: &str = "format: h264|hevc|av1|prores|uncompressed|webm|png|jpeg|tiff|exr|tga|gif|wav|aiff";
+const FORMATS: &str = "format: h264|hevc|av1|prores|uncompressed|webm|png|jpeg|tiff|exr|tga|gif|apng|svga|wav|aiff";
 
 /// `channels` (refusing RGBA where the format has no alpha) and `color`/`alphaMode`.
 fn apply_channels_and_alpha(om: &mut OutputModule, p: &Value, cmd: &str) -> Result<()> {
@@ -393,6 +393,9 @@ fn apply_output(om: &mut OutputModule, templates: &RenderTemplates, roi: Option<
     }
     if let Some(l) = b_p(p, "loop") {
         om.gif_loop = l;
+    }
+    if let Some(l) = b_p(p, "apngLoop") {
+        om.apng_loop = l;
     }
     if let Some(l) = b_p(p, "includeProjectLink") {
         om.include_project_link = l;

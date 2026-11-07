@@ -9,6 +9,8 @@
 //! | OpenEXR sequence | one file per frame, scan lines | 32-bit float (default) or half float, linear light, premultiplied; compression None, RLE, ZIPS, ZIP (default), PIZ, PXR24, B44, B44A, DWAA, DWAB | yes | — |
 //! | Targa sequence | one file per frame | uncompressed 8-bit: 24-bit RGB, 32-bit RGB + Alpha (8 alpha bits), 8-bit grey for Alpha; top-left origin | yes (straight or premultiplied) | — |
 //! | Animated GIF | GIF89a | 256-colour palette per frame (NeuQuant) | 1-bit | — |
+//! | Animated PNG | APNG (one PNG stream: `acTL`, `fcTL`, `IDAT`, `fdAT`) | lossless 8-bit RGB / RGBA, filtered per row and deflated | 8-bit | — |
+//! | SVGA | ZIP: `movie.binary` (protobuf `MovieEntity`) and one PNG a frame | lossless 8-bit RGB / RGBA frames, one sprite per frame | 8-bit | — |
 //! | WebM | WebM (Matroska) | VP9 profile 0 (`effectcraft-vp9enc`: key + inter frames, a key frame every 2 s, loop filter), 8-bit 4:2:0; or AV1 (`effectcraft-av1enc`) | VP9 alpha (BlockAdditional) | Opus (`effectcraft-opusenc`: SILK / hybrid / CELT by bitrate and application), 48 kHz |
 //! | HEVC | MP4 (`hvc1`) | `effectcraft-hevcenc` Main / Main 10 4:2:0, I + P slices, bitrate or constant quality, level, key-frame interval | no | AAC-LC (FilmCraft) |
 //! | AV1 | MP4 (`av01`) | `effectcraft-av1enc` Main 8/10-bit 4:2:0, key + inter frames | no | AAC-LC (FilmCraft) |
@@ -33,14 +35,19 @@
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod apng;
+mod crc32;
 mod encode;
 pub mod exr_out;
 mod hevc_av1;
 mod out;
 mod pipeline;
+mod pngenc;
+mod svga;
 mod uncompressed;
 mod webm;
 mod webm_av1;
+mod zip;
 
 use web_time::Instant;
 
@@ -214,6 +221,8 @@ async fn export_with(cx: &Cx<'_>, progress: &mut dyn FnMut(&Progress) -> bool, t
             encode::movie(cx, comp, w, h, &mut st).await?
         }
         OutputFormat::Gif => gif_export(cx, comp, w, h, &mut st).await?,
+        OutputFormat::Apng => apng::apng(cx, comp, w, h, &mut st).await?,
+        OutputFormat::Svga => svga::svga(cx, comp, w, h, &mut st).await?,
         OutputFormat::WebM => webm::webm(cx, comp, w, h, &mut st).await?,
         OutputFormat::Wav => webm::audio_file(cx, comp, false, &mut st)?,
         OutputFormat::Aiff => webm::audio_file(cx, comp, true, &mut st)?,
@@ -236,6 +245,10 @@ pub(crate) struct State<'p> {
 impl State<'_> {
     fn snapshot(&self) -> Progress {
         Progress { done: self.done, total: self.total, elapsed: self.t0.elapsed().as_secs_f64() }
+    }
+    /// Frames in the whole job.
+    pub(crate) fn total(&self) -> u64 {
+        self.total
     }
     /// Count `n` more frames; `Err(Cancelled)` when the callback says stop.
     pub(crate) fn advance(&mut self, n: u64) -> Result<()> {

@@ -65,6 +65,8 @@ rayon = "1"
 # std::time::Instant/SystemTime on native; the browser clock on wasm32 (std's panic there).
 web-time = "1"
 gif = "0.14"
+# deflate streams: the APNG and SVGA writers (crates/export)
+flate2 = "1"
 proptest = "1"
 
 # scripting (expressions)

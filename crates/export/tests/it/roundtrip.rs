@@ -571,6 +571,264 @@ fn gif_roundtrip() {
 }
 
 #[test]
+fn apng_roundtrip() {
+    let (p, cid) = project(None);
+    let d = out_dir("apng");
+    let mut om = OutputModule::for_format(OutputFormat::Apng);
+    om.channels = Channels::Rgba;
+    let path = d.join("anim.png");
+    run(&p, cid, &NoFootage, &om, &path);
+    let bytes = std::fs::read(&path).expect("read");
+    assert!(bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]), "PNG signature");
+
+    let chunks = png_chunks(&bytes);
+    let kinds: Vec<&str> = chunks.iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(kinds.first(), Some(&"IHDR"));
+    assert_eq!(kinds.get(1), Some(&"acTL"), "the animation control comes before the first image");
+    assert_eq!(kinds.last(), Some(&"IEND"));
+    let actl = &chunks[1].1;
+    assert_eq!(u32_be(actl, 0), FRAMES as u32, "frames announced");
+    assert_eq!(u32_be(actl, 4), 0, "loops forever by default");
+    assert_eq!(kinds.iter().filter(|k| **k == "fcTL").count(), FRAMES as usize);
+    assert_eq!(kinds.iter().filter(|k| **k == "IDAT").count(), 1, "frame 0 is the still image");
+    assert_eq!(kinds.iter().filter(|k| **k == "fdAT").count(), FRAMES as usize - 1);
+
+    // Every frame is shown for 1/10 s: delay 1/10.
+    for (_, data) in chunks.iter().filter(|(k, _)| k == "fcTL") {
+        assert_eq!((u16_be(data, 20), u16_be(data, 22)), (1, 10), "delay");
+    }
+    // Frames through an APNG-aware reader of our own: the first four are background only, the
+    // rest carry the red solid, exactly as the comp renders them.
+    for k in [0u64, 4, 5, 11] {
+        let img = apng_frame(&bytes, k as usize);
+        check_frame(&over_background(&img), k, 0.02);
+    }
+}
+
+#[test]
+fn svga_roundtrip() {
+    let (p, cid) = project(None);
+    let d = out_dir("svga");
+    let mut om = OutputModule::for_format(OutputFormat::Svga);
+    om.channels = Channels::Rgba;
+    let path = d.join("anim.svga");
+    run(&p, cid, &NoFootage, &om, &path);
+    let bytes = std::fs::read(&path).expect("read");
+    assert!(bytes.starts_with(b"PK\x03\x04"), "a ZIP container");
+
+    let entries = zip_entries(&bytes);
+    let names: Vec<&str> = entries.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(names.len(), FRAMES as usize + 1, "one picture a frame, plus movie.binary");
+    assert_eq!(names.last(), Some(&"movie.binary"));
+    for (i, name) in names.iter().take(FRAMES as usize).enumerate() {
+        assert_eq!(*name, format!("frame_{i:05}.png"));
+    }
+
+    // movie.binary: version, canvas, frame rate, frame count, then one sprite a frame with a key
+    // frame per movie frame.
+    let movie = entries.iter().find(|(n, _)| n == "movie.binary").map(|(_, d)| d.clone()).expect("movie.binary");
+    let top = proto_fields(&movie);
+    assert_eq!(top[0].2, b"2.0.0".to_vec());
+    let params = proto_fields(&top[1].2);
+    assert_eq!(f32_le(&params[0].2), W as f32, "viewBoxWidth");
+    assert_eq!(f32_le(&params[1].2), H as f32, "viewBoxHeight");
+    assert_eq!(proto_u64(&params[2].2), 10, "fps");
+    assert_eq!(proto_u64(&params[3].2), FRAMES, "frames");
+    let sprites: Vec<_> = top.iter().filter(|f| f.0 == 4).collect();
+    assert_eq!(sprites.len(), FRAMES as usize);
+    let first = proto_fields(&sprites[0].2);
+    assert_eq!(first[0].2, b"frame_00000.png".to_vec(), "the sprite's imageKey");
+
+    // A frame picture decodes to what the comp rendered.
+    for k in [0u64, 5] {
+        let png = entries.iter().find(|(n, _)| *n == format!("frame_{k:05}.png")).map(|(_, d)| d.clone()).expect("frame picture");
+        let img = image::load_from_memory_with_format(&png, image::ImageFormat::Png).expect("PNG frame");
+        let rgba = img.to_rgba8();
+        check_frame(&over_background(rgba.as_raw()), k, 0.02);
+    }
+}
+
+/// A straight-alpha RGBA frame composited over the comp's background — what the frame looks like
+/// once a player draws it — so it compares against `check_frame` like an opaque one.
+fn over_background(rgba: &[u8]) -> Image {
+    let mut px = Vec::with_capacity(rgba.len());
+    for p in rgba.as_chunks::<4>().0 {
+        let a = p[3] as f32 / 255.0;
+        for (c, bg) in p.iter().take(3).zip(BG) {
+            let v = *c as f32 / 255.0 * a + bg * (1.0 - a);
+            px.push((v * 255.0).round().clamp(0.0, 255.0) as u8);
+        }
+        px.push(255);
+    }
+    Image::from_rgba8(W, H, &px)
+}
+
+/// Every PNG chunk of `b` as `(type, data)`, in file order.
+fn png_chunks(b: &[u8]) -> Vec<(String, Vec<u8>)> {
+    let mut out = Vec::new();
+    let mut p = 8usize;
+    while p + 8 <= b.len() {
+        let len = u32_be(b, p) as usize;
+        let kind = String::from_utf8_lossy(b.get(p + 4..p + 8).unwrap_or_default()).to_string();
+        let Some(data) = b.get(p + 8..p + 8 + len) else { break };
+        out.push((kind, data.to_vec()));
+        p += 12 + len; // length + type + data + CRC
+    }
+    out
+}
+
+fn u32_be(b: &[u8], at: usize) -> u32 {
+    u32::from_be_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]])
+}
+
+fn u16_be(b: &[u8], at: usize) -> u16 {
+    u16::from_be_bytes([b[at], b[at + 1]])
+}
+
+/// Frame `k` of an APNG as RGBA: its zlib stream inflated and unfiltered.
+fn apng_frame(b: &[u8], k: usize) -> Vec<u8> {
+    let chunks = png_chunks(b);
+    let stream = if k == 0 {
+        chunks.iter().find(|(kind, _)| kind == "IDAT").map(|(_, d)| d.clone()).expect("frame 0 data")
+    } else {
+        chunks.iter().filter(|(kind, _)| kind == "fdAT").nth(k - 1).map(|(_, d)| d[4..].to_vec()).expect("frame data")
+    };
+    let mut raw = Vec::new();
+    std::io::Read::read_to_end(&mut flate2::read::ZlibDecoder::new(&stream[..]), &mut raw).expect("inflate");
+    unfilter(&raw, W as usize, H as usize, 4)
+}
+
+fn paeth(a: u8, b: u8, c: u8) -> u8 {
+    let p = a as i16 + b as i16 - c as i16;
+    let (pa, pb, pc) = ((p - a as i16).abs(), (p - b as i16).abs(), (p - c as i16).abs());
+    if pa <= pb && pa <= pc {
+        a
+    } else if pb <= pc {
+        b
+    } else {
+        c
+    }
+}
+
+/// Undo PNG row filtering (the filters our writer picks per row).
+fn unfilter(raw: &[u8], w: usize, h: usize, bpp: usize) -> Vec<u8> {
+    let stride = w * bpp;
+    let mut out = vec![0u8; stride * h];
+    let mut prev = vec![0u8; stride];
+    let mut p = 0usize;
+    for y in 0..h {
+        let filter = raw[p];
+        p += 1;
+        let mut row = vec![0u8; stride];
+        for i in 0..stride {
+            let x = raw[p + i];
+            let a = if i >= bpp { row[i - bpp] } else { 0 };
+            let b = prev[i];
+            let c = if i >= bpp { prev[i - bpp] } else { 0 };
+            row[i] = match filter {
+                0 => x,
+                1 => x.wrapping_add(a),
+                2 => x.wrapping_add(b),
+                3 => x.wrapping_add(((a as u16 + b as u16) / 2) as u8),
+                4 => x.wrapping_add(paeth(a, b, c)),
+                other => panic!("unexpected PNG filter {other}"),
+            };
+        }
+        out[y * stride..(y + 1) * stride].copy_from_slice(&row);
+        prev.copy_from_slice(&row);
+        p += stride;
+    }
+    out
+}
+
+/// The entries of a ZIP container written by our SVGA writer, in file order.
+fn zip_entries(b: &[u8]) -> Vec<(String, Vec<u8>)> {
+    let mut out = Vec::new();
+    let mut p = 0usize;
+    while p + 30 <= b.len() && b.get(p..p + 4) == Some(b"PK\x03\x04") {
+        let method = u16::from_le_bytes([b[p + 8], b[p + 9]]);
+        let compressed = u32::from_le_bytes([b[p + 18], b[p + 19], b[p + 20], b[p + 21]]) as usize;
+        let name_len = u16::from_le_bytes([b[p + 26], b[p + 27]]) as usize;
+        let extra_len = u16::from_le_bytes([b[p + 28], b[p + 29]]) as usize;
+        let name = String::from_utf8(b[p + 30..p + 30 + name_len].to_vec()).expect("entry name");
+        let start = p + 30 + name_len + extra_len;
+        let body = &b[start..start + compressed];
+        let data = if method == 0 {
+            body.to_vec()
+        } else {
+            let mut v = Vec::new();
+            std::io::Read::read_to_end(&mut flate2::read::DeflateDecoder::new(body), &mut v).expect("inflate entry");
+            v
+        };
+        out.push((name, data));
+        p = start + compressed;
+    }
+    out
+}
+
+/// A protobuf message's `(field, wire type, value)` triples; length-delimited values are bytes.
+fn proto_fields(mut b: &[u8]) -> Vec<(u32, u8, Vec<u8>)> {
+    let mut out = Vec::new();
+    fn varint(b: &mut &[u8]) -> u64 {
+        let mut v = 0u64;
+        let mut shift = 0;
+        loop {
+            let byte = b[0];
+            *b = &b[1..];
+            v |= ((byte & 0x7F) as u64) << shift;
+            if byte & 0x80 == 0 {
+                return v;
+            }
+            shift += 7;
+        }
+    }
+    while !b.is_empty() {
+        let key = varint(&mut b);
+        let (field, wire) = ((key >> 3) as u32, (key & 7) as u8);
+        let value = match wire {
+            0 => {
+                // Keep the varint's own bytes: a fixed-width copy would not round-trip.
+                let start = b;
+                let _ = varint(&mut b);
+                let consumed = start.len().saturating_sub(b.len());
+                start[..consumed].to_vec()
+            }
+            2 => {
+                let n = varint(&mut b) as usize;
+                let v = b[..n].to_vec();
+                b = &b[n..];
+                v
+            }
+            5 => {
+                let v = b[..4].to_vec();
+                b = &b[4..];
+                v
+            }
+            other => panic!("unexpected protobuf wire type {other}"),
+        };
+        out.push((field, wire, value));
+    }
+    out
+}
+
+fn proto_u64(v: &[u8]) -> u64 {
+    let mut out = 0u64;
+    let mut shift = 0;
+    for byte in v {
+        out |= ((byte & 0x7F) as u64) << shift;
+        if byte & 0x80 == 0 {
+            break;
+        }
+        shift += 7;
+    }
+    out
+}
+
+fn f32_le(v: &[u8]) -> f32 {
+    f32::from_le_bytes([v[0], v[1], v[2], v[3]])
+}
+
+#[test]
 fn cancel_stops_early() {
     let (p, cid) = project(None);
     let d = out_dir("cancel");

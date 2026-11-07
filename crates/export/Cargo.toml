@@ -25,6 +25,7 @@ effectcraft-av1enc = { workspace = true }
 image = { workspace = true, features = ["png", "jpeg", "tiff", "exr", "tga"] }
 exr = { workspace = true }
 gif = { workspace = true }
+flate2 = { workspace = true }
 rayon = { workspace = true }
 web-time = { workspace = true }
 thiserror = { workspace = true }

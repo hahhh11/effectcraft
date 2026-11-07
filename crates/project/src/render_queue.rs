@@ -523,6 +523,12 @@ pub enum OutputFormat {
     TargaSequence,
     /// Animated GIF.
     Gif,
+    /// Animated PNG: one PNG stream, frame 0 the still image, the rest `fdAT` frames (8-bit
+    /// alpha, lossless).
+    Apng,
+    /// SVGA: a ZIP of `movie.binary` (protobuf) and one PNG per frame, for the SVGA players in
+    /// Chinese apps and on the web.
+    Svga,
     /// WebM: VP9 video (alpha with RGB + Alpha) + Opus audio.
     WebM,
     /// Audio only: WAV (16-bit PCM).
@@ -540,7 +546,7 @@ pub enum OutputFormat {
 }
 
 impl OutputFormat {
-    pub const ALL: [OutputFormat; 14] = [
+    pub const ALL: [OutputFormat; 16] = [
         OutputFormat::H264,
         OutputFormat::Hevc,
         OutputFormat::Av1,
@@ -553,6 +559,8 @@ impl OutputFormat {
         OutputFormat::ExrSequence,
         OutputFormat::TargaSequence,
         OutputFormat::Gif,
+        OutputFormat::Apng,
+        OutputFormat::Svga,
         OutputFormat::Wav,
         OutputFormat::Aiff,
     ];
@@ -567,6 +575,8 @@ impl OutputFormat {
             OutputFormat::ExrSequence => "OpenEXR Sequence",
             OutputFormat::TargaSequence => "Targa Sequence",
             OutputFormat::Gif => "Animated GIF",
+            OutputFormat::Apng => "Animated PNG (APNG)",
+            OutputFormat::Svga => "SVGA",
             OutputFormat::WebM => "WebM (VP9 + Opus)",
             OutputFormat::Wav => "WAV",
             OutputFormat::Aiff => "AIFF",
@@ -585,6 +595,8 @@ impl OutputFormat {
             OutputFormat::ExrSequence => "exr",
             OutputFormat::TargaSequence => "tga",
             OutputFormat::Gif => "gif",
+            OutputFormat::Apng => "png",
+            OutputFormat::Svga => "svga",
             OutputFormat::WebM => "webm",
             OutputFormat::Wav => "wav",
             OutputFormat::Aiff => "aif",
@@ -636,6 +648,11 @@ impl OutputFormat {
             "exr" | "openexr" | "openexrsequence" => OutputFormat::ExrSequence,
             "tga" | "targa" | "targasequence" => OutputFormat::TargaSequence,
             "gif" | "animatedgif" => OutputFormat::Gif,
+            // `.png` stays the PNG sequence's name: APNG files are `.png` too, but picking a
+            // sequence from a bare extension is the far more common intent (an APNG is chosen by
+            // its format name or by the module it comes from).
+            "apng" | "animatedpng" => OutputFormat::Apng,
+            "svga" => OutputFormat::Svga,
             "webm" | "vp9" | "webmvp9opus" => OutputFormat::WebM,
             "wav" | "wave" => OutputFormat::Wav,
             "aif" | "aiff" | "aifc" => OutputFormat::Aiff,
@@ -1211,8 +1228,10 @@ pub struct OutputModule {
     /// 1 (mono) or 2 (stereo).
     pub audio_channels: u8,
     pub audio_format: AudioFormat,
-    /// GIF: loop forever.
+    /// GIF: loop forever. APNG: loop forever ([`OutputModule::apng_loop`]).
     pub gif_loop: bool,
+    /// APNG: loop forever (otherwise the animation plays once).
+    pub apng_loop: bool,
     /// HEVC / AV1 options.
     pub codec: VideoCodecOptions,
     /// WebM video codec.
@@ -1247,6 +1266,7 @@ impl Default for OutputModule {
             audio_channels: 2,
             audio_format: AudioFormat::S16,
             gif_loop: true,
+            apng_loop: true,
             codec: VideoCodecOptions::default(),
             webm_codec: WebmVideoCodec::Vp9,
             opus_bitrate_kbps: 192,
@@ -1302,6 +1322,8 @@ impl OutputModule {
             }
             OutputFormat::WebM if self.webm_bitrate => v.push(("Bitrate", format!("{} kbps", self.bitrate_kbps))),
             OutputFormat::WebM | OutputFormat::JpegSequence => v.push(("Quality", self.quality.to_string())),
+            OutputFormat::Gif => v.push(("Loop", if self.gif_loop { "Forever".into() } else { "Once".into() })),
+            OutputFormat::Apng => v.push(("Loop", if self.apng_loop { "Forever".into() } else { "Once".into() })),
             _ => {}
         }
         if self.crop.enabled {

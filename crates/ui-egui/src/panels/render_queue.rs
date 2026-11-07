@@ -154,7 +154,16 @@ fn output_menu(it: &RenderQueueItem, available: &[OutputFormat], templates: &Ren
     }
     v.push(("   Make Template…".into(), json!({"form": "makeOutputTemplate"})));
     v.push(("-".into(), Value::Null));
-    for f in OutputFormat::ALL {
+    // The animated formats first, apart from the rest: they are what a web or app hand-off
+    // wants, and a 16-format list buries them a dozen rows down.
+    let animated = |f: OutputFormat| matches!(f, OutputFormat::Gif | OutputFormat::Apng | OutputFormat::Svga);
+    for f in OutputFormat::ALL.into_iter().filter(|f| animated(*f)) {
+        if available.contains(&f) {
+            v.push((mark(o.format == f, &tr_args("Format: {}", &[&(f.label())])), json!({"format": format!("{f:?}")})));
+        }
+    }
+    v.push(("-".into(), Value::Null));
+    for f in OutputFormat::ALL.into_iter().filter(|f| !animated(*f)) {
         if available.contains(&f) {
             v.push((mark(o.format == f, &tr_args("Format: {}", &[&(f.label())])), json!({"format": format!("{f:?}")})));
         }
@@ -218,6 +227,10 @@ fn output_menu(it: &RenderQueueItem, available: &[OutputFormat], templates: &Ren
         OutputFormat::Gif => {
             v.push(("-".into(), Value::Null));
             v.push((mark(o.gif_loop, "Loop Forever"), json!({"loop": !o.gif_loop})));
+        }
+        OutputFormat::Apng => {
+            v.push(("-".into(), Value::Null));
+            v.push((mark(o.apng_loop, "Loop Forever"), json!({"apngLoop": !o.apng_loop})));
         }
         _ => {}
     }
@@ -1128,5 +1141,31 @@ mod tests {
         );
         it.output = OutputModule::for_format(OutputFormat::PngSequence);
         assert!(!menu(&it).iter().any(|(l, _)| l.contains("EXR Compression") || l.contains("EXR Bit Depth")));
+    }
+
+    /// The Output Module menu offers the animated formats the exporter writes, and picks them:
+    /// APNG with its loop toggle, SVGA as it is.
+    #[test]
+    fn output_menu_offers_apng_and_svga() {
+        use effectcraft_engine::project::render_queue::{OutputFormat, OutputModule, RenderQueueItem};
+        use effectcraft_engine::project::{ItemId, render_templates::RenderTemplates};
+        crate::i18n::ui::set_current("en");
+        let mut it = RenderQueueItem::new(1, ItemId(1));
+        let menu = |it: &RenderQueueItem| super::output_menu(it, &OutputFormat::ALL, &RenderTemplates::default());
+        let m = menu(&it);
+        let entry = |label: &str| m.iter().find(|(l, _)| l.trim_start_matches('✓').trim() == label).cloned();
+        assert_eq!(entry("Format: Animated PNG (APNG)").map(|(_, v)| v), Some(serde_json::json!({"format": "Apng"})));
+        assert_eq!(entry("Format: SVGA").map(|(_, v)| v), Some(serde_json::json!({"format": "Svga"})));
+        // Listed once, and above the rest: the animated formats are their own group at the top.
+        let pos = |label: &str| m.iter().position(|(l, _)| l.trim_start_matches('✓').trim() == label);
+        assert_eq!(m.iter().filter(|(l, _)| l.trim_start_matches('✓').trim() == "Format: SVGA").count(), 1);
+        assert!(pos("Format: SVGA").zip(pos("Format: H.264")).is_some_and(|(a, b)| a < b), "the animated formats come before the movie ones");
+        assert!(pos("Format: Animated PNG (APNG)").zip(pos("Format: PNG Sequence")).is_some_and(|(a, b)| a < b));
+
+        it.output = OutputModule::for_format(OutputFormat::Apng);
+        let m = menu(&it);
+        let loop_entry = m.iter().find(|(l, _)| l.trim_start_matches('✓').trim() == "Loop Forever").cloned();
+        assert_eq!(loop_entry.map(|(_, v)| v), Some(serde_json::json!({"apngLoop": false})), "on by default, so the entry turns it off");
+        assert!(m.iter().any(|(l, _)| l.trim_start_matches('✓').trim() == "Format: Animated PNG (APNG)"));
     }
 }

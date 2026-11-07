@@ -1585,6 +1585,7 @@ dependencies = [
  "filmcraft-opus",
  "filmcraft-prores",
  "filmcraft-vp9",
+ "flate2",
  "gif",
  "image",
  "log",

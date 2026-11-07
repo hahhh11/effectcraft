@@ -38,6 +38,8 @@ The **Output Module:** menu lists the formats your build can export:
 | TIFF Sequence            | `.tif`, one file per frame  |
 | OpenEXR Sequence         | `.exr`, one file per frame  |
 | Animated GIF             | `.gif`                      |
+| Animated PNG (APNG)      | `.png`, one file, frames    |
+| SVGA                     | `.svga`, one file, frames   |
 | WAV                      | `.wav`, audio only          |
 | AIFF                     | `.aif`, audio only          |
 
