@@ -1,4 +1,4 @@
-//! CRC-32 (IEEE 802.3), the checksum PNG chunks and ZIP entries carry.
+//! CRC-32 (IEEE 802.3), the checksum PNG chunks carry.
 //!
 //! Table built at compile time; no dependencies, and nothing here can fail.
 
@@ -33,7 +33,8 @@ pub(crate) fn update(crc: u32, data: &[u8]) -> u32 {
 }
 
 /// The CRC-32 of `data`.
-pub(crate) fn crc32(data: &[u8]) -> u32 {
+#[cfg(test)]
+fn crc32(data: &[u8]) -> u32 {
     update(0, data)
 }
 

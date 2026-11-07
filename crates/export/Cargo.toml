@@ -32,7 +32,6 @@ thiserror = { workspace = true }
 log = { workspace = true }
 
 [dev-dependencies]
-serde_json = { workspace = true }
 effectcraft-media = { workspace = true }
 effectcraft-effects = { workspace = true }
 effectcraft-color = { workspace = true }

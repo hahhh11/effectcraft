@@ -39,9 +39,11 @@ The **Output Module:** menu lists the formats your build can export:
 | OpenEXR Sequence         | `.exr`, one file per frame  |
 | Animated GIF             | `.gif`                      |
 | Animated PNG (APNG)      | `.png`, one file, frames    |
-| SVGA                     | `.svga`, one file, frames   |
+| SVGA (2.0)               | `.svga`, one file, frames   |
 | WAV                      | `.wav`, audio only          |
 | AIFF                     | `.aif`, audio only          |
+
+SVGA is written as a standard 2.0 file: one zlib-compressed protobuf with every frame's PNG embedded, so the web players, the native iOS/Android SDKs and pages that ship a minimal SVGA parser all read the same file. It is a frame-by-frame container (up to 600 frames), not a vector animation.
 
 To keep transparency, choose **Channels: RGB + Alpha** in the **Output Module:** menu. It appears for formats that can store alpha, such as QuickTime (ProRes), QuickTime (Uncompressed) and PNG Sequence. H.264, HEVC, AV1 and JPEG Sequence cannot.
 

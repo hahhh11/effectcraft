@@ -10,7 +10,7 @@
 //! | Targa sequence | one file per frame | uncompressed 8-bit: 24-bit RGB, 32-bit RGB + Alpha (8 alpha bits), 8-bit grey for Alpha; top-left origin | yes (straight or premultiplied) | — |
 //! | Animated GIF | GIF89a | 256-colour palette per frame (NeuQuant) | 1-bit | — |
 //! | Animated PNG | APNG (one PNG stream: `acTL`, `fcTL`, `IDAT`, `fdAT`) | lossless 8-bit RGB / RGBA, filtered per row and deflated | 8-bit | — |
-//! | SVGA | ZIP: `movie.binary` (protobuf `MovieEntity`) and one PNG a frame | lossless 8-bit RGB / RGBA frames, one sprite per frame | 8-bit | — |
+//! | SVGA | `.svga`: one zlib stream wrapping a protobuf `MovieEntity` (SVGA 2.0) with the PNGs embedded in `images` | lossless 8-bit RGB / RGBA frames, one sprite per frame | 8-bit | — |
 //! | WebM | WebM (Matroska) | VP9 profile 0 (`effectcraft-vp9enc`: key + inter frames, a key frame every 2 s, loop filter), 8-bit 4:2:0; or AV1 (`effectcraft-av1enc`) | VP9 alpha (BlockAdditional) | Opus (`effectcraft-opusenc`: SILK / hybrid / CELT by bitrate and application), 48 kHz |
 //! | HEVC | MP4 (`hvc1`) | `effectcraft-hevcenc` Main / Main 10 4:2:0, I + P slices, bitrate or constant quality, level, key-frame interval | no | AAC-LC (FilmCraft) |
 //! | AV1 | MP4 (`av01`) | `effectcraft-av1enc` Main 8/10-bit 4:2:0, key + inter frames | no | AAC-LC (FilmCraft) |
@@ -47,7 +47,6 @@ mod svga;
 mod uncompressed;
 mod webm;
 mod webm_av1;
-mod zip;
 
 use web_time::Instant;
 

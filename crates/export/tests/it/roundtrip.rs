@@ -605,6 +605,9 @@ fn apng_roundtrip() {
     }
 }
 
+/// A 2.0 SVGA is one zlib stream wrapping a protobuf `MovieEntity` whose `images` map holds the
+/// PNG bytes themselves — that is what `svgaplayerweb`'s `load_viaProto`, the duiba share-page
+/// parser and the native SDKs all read. A ZIP / `movie.spec` file is the 1.x form and needs JSZip.
 #[test]
 fn svga_roundtrip() {
     let (p, cid) = project(None);
@@ -614,46 +617,117 @@ fn svga_roundtrip() {
     let path = d.join("anim.svga");
     run(&p, cid, &NoFootage, &om, &path);
     let bytes = std::fs::read(&path).expect("read");
-    assert!(bytes.starts_with(b"PK\x03\x04"), "a ZIP container");
+    assert_eq!(bytes[0], 0x78, "a zlib header, not a ZIP");
+    assert_ne!(&bytes[..2], b"PK", "SVGA 2.0 is a bare protobuf stream");
 
-    let entries = zip_entries(&bytes);
-    let names: Vec<&str> = entries.iter().map(|(n, _)| n.as_str()).collect();
-    assert_eq!(names.len(), FRAMES as usize + 1, "one picture a frame, plus movie.spec");
-    assert_eq!(names.last(), Some(&"movie.spec"));
-    for (i, name) in names.iter().take(FRAMES as usize).enumerate() {
-        assert_eq!(*name, format!("frame_{i:05}.png"));
+    let mut proto = Vec::new();
+    std::io::Read::read_to_end(&mut flate2::read::ZlibDecoder::new(&bytes[..]), &mut proto).expect("inflate");
+    let top = proto_fields(&proto);
+    assert_eq!(top[0].0, 1, "version");
+    assert_eq!(top[0].2, b"2.0.0");
+    let params = proto_fields(&top[1].2);
+    assert_eq!(f32_le(&params[0].2), W as f32, "viewBoxWidth");
+    assert_eq!(f32_le(&params[1].2), H as f32, "viewBoxHeight");
+    assert_eq!(varint_of(&params[2].2), 10, "fps");
+    assert_eq!(varint_of(&params[3].2), FRAMES, "frames");
+
+    // Field 3 is the image map: {1: key, 2: PNG bytes}, one per frame.
+    let map: Vec<_> = top.iter().filter(|f| f.0 == 3).collect();
+    assert_eq!(map.len(), FRAMES as usize, "one embedded picture a frame");
+    for (i, entry) in map.iter().enumerate() {
+        let e = proto_fields(&entry.2);
+        assert_eq!(e[0].0, 1, "map key");
+        assert_eq!(e[0].2, format!("frame_{i:05}").into_bytes());
+        assert_eq!(e[1].0, 2, "map value");
+        assert!(e[1].2.starts_with(&[0x89, b'P', b'N', b'G']), "the PNG bytes themselves");
     }
 
-    // movie.spec: the 1.5 JSON the players read out of a ZIP — canvas, frame rate, the image map
-    // and one sprite per frame whose alpha is 1 on its own frame only.
-    let spec = entries.iter().find(|(n, _)| n == "movie.spec").map(|(_, d)| d.clone()).expect("movie.spec");
-    let v: serde_json::Value = serde_json::from_slice(&spec).expect("movie.spec is JSON");
-    assert_eq!(v["params"]["viewBoxWidth"], W as f64, "viewBoxWidth");
-    assert_eq!(v["params"]["viewBoxHeight"], H as f64, "viewBoxHeight");
-    assert_eq!(v["params"]["fps"], 10.0, "fps");
-    assert_eq!(v["params"]["frames"], FRAMES as f64, "frames");
-    assert_eq!(v["images"]["frame_00000"], "frame_00000", "image map key to entry base name");
-    let sprites = v["sprites"].as_array().expect("sprites");
+    // One sprite per frame: alpha 1 on its own frame only, laid out over the whole canvas.
+    let sprites: Vec<_> = top.iter().filter(|f| f.0 == 4).collect();
     assert_eq!(sprites.len(), FRAMES as usize, "one sprite a frame");
-    assert_eq!(sprites[0]["imageKey"], "frame_00000");
     for (i, sprite) in sprites.iter().enumerate() {
-        let frames = sprite["frames"].as_array().expect("frames");
+        let s = proto_fields(&sprite.2);
+        assert_eq!(s[0].2, format!("frame_{i:05}").into_bytes(), "imageKey");
+        let frames: Vec<_> = s.iter().filter(|f| f.0 == 2).collect();
         assert_eq!(frames.len(), FRAMES as usize, "one key frame per movie frame");
-        assert_eq!(frames[i]["alpha"], 1.0, "sprite {i} is opaque on its own frame");
-        if i > 0 {
-            assert_eq!(frames[i - 1]["alpha"], 0.0, "sprite {i} is clear before it");
+        for (j, kf) in frames.iter().enumerate() {
+            let k = proto_fields(&kf.2);
+            assert_eq!(f32_le(&k[0].2), if i == j { 1.0 } else { 0.0 }, "sprite {i}, key frame {j}");
+            let l = proto_fields(&k[1].2);
+            assert_eq!(f32_le(&l[2].2), W as f32, "layout.width");
+            assert_eq!(f32_le(&l[3].2), H as f32, "layout.height");
         }
-        assert_eq!(frames[i]["layout"]["width"], W as f64);
-        assert_eq!(frames[i]["layout"]["height"], H as f64);
     }
 
     // A frame picture decodes to what the comp rendered.
     for k in [0u64, 5] {
-        let png = entries.iter().find(|(n, _)| *n == format!("frame_{k:05}.png")).map(|(_, d)| d.clone()).expect("frame picture");
-        let img = image::load_from_memory_with_format(&png, image::ImageFormat::Png).expect("PNG frame");
+        let e = proto_fields(&map[k as usize].2);
+        let img = image::load_from_memory_with_format(&e[1].2, image::ImageFormat::Png).expect("PNG frame");
         let rgba = img.to_rgba8();
         check_frame(&over_background(rgba.as_raw()), k, 0.02);
     }
+}
+
+/// Read a protobuf message into `(field, wire type, value)` triples; a length-delimited value is
+/// its bytes, a varint's value is its own encoded bytes.
+fn proto_fields(mut b: &[u8]) -> Vec<(u32, u8, Vec<u8>)> {
+    let read_varint = |b: &mut &[u8]| -> u64 {
+        let mut v = 0u64;
+        let mut shift = 0;
+        loop {
+            let byte = b[0];
+            *b = &b[1..];
+            v |= ((byte & 0x7F) as u64) << shift;
+            if byte & 0x80 == 0 {
+                return v;
+            }
+            shift += 7;
+        }
+    };
+    let mut out = Vec::new();
+    while !b.is_empty() {
+        let key = read_varint(&mut b);
+        let (field, wire) = ((key >> 3) as u32, (key & 7) as u8);
+        let value = match wire {
+            0 => {
+                let start = b;
+                let _ = read_varint(&mut b);
+                let consumed = start.len().saturating_sub(b.len());
+                start[..consumed].to_vec()
+            }
+            2 => {
+                let n = read_varint(&mut b) as usize;
+                let v = b[..n].to_vec();
+                b = &b[n..];
+                v
+            }
+            5 => {
+                let v = b[..4].to_vec();
+                b = &b[4..];
+                v
+            }
+            w => panic!("unexpected wire type {w}"),
+        };
+        out.push((field, wire, value));
+    }
+    out
+}
+
+fn varint_of(v: &[u8]) -> u64 {
+    let mut out = 0u64;
+    let mut shift = 0;
+    for byte in v {
+        out |= ((byte & 0x7F) as u64) << shift;
+        if byte & 0x80 == 0 {
+            break;
+        }
+        shift += 7;
+    }
+    out
+}
+
+fn f32_le(v: &[u8]) -> f32 {
+    f32::from_le_bytes([v[0], v[1], v[2], v[3]])
 }
 
 /// A straight-alpha RGBA frame composited over the comp's background — what the frame looks like
@@ -745,31 +819,6 @@ fn unfilter(raw: &[u8], w: usize, h: usize, bpp: usize) -> Vec<u8> {
         out[y * stride..(y + 1) * stride].copy_from_slice(&row);
         prev.copy_from_slice(&row);
         p += stride;
-    }
-    out
-}
-
-/// The entries of a ZIP container written by our SVGA writer, in file order.
-fn zip_entries(b: &[u8]) -> Vec<(String, Vec<u8>)> {
-    let mut out = Vec::new();
-    let mut p = 0usize;
-    while p + 30 <= b.len() && b.get(p..p + 4) == Some(b"PK\x03\x04") {
-        let method = u16::from_le_bytes([b[p + 8], b[p + 9]]);
-        let compressed = u32::from_le_bytes([b[p + 18], b[p + 19], b[p + 20], b[p + 21]]) as usize;
-        let name_len = u16::from_le_bytes([b[p + 26], b[p + 27]]) as usize;
-        let extra_len = u16::from_le_bytes([b[p + 28], b[p + 29]]) as usize;
-        let name = String::from_utf8(b[p + 30..p + 30 + name_len].to_vec()).expect("entry name");
-        let start = p + 30 + name_len + extra_len;
-        let body = &b[start..start + compressed];
-        let data = if method == 0 {
-            body.to_vec()
-        } else {
-            let mut v = Vec::new();
-            std::io::Read::read_to_end(&mut flate2::read::DeflateDecoder::new(body), &mut v).expect("inflate entry");
-            v
-        };
-        out.push((name, data));
-        p = start + compressed;
     }
     out
 }
